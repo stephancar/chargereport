@@ -51,6 +51,15 @@
                         file:bg-slate-100 file:text-slate-900 hover:file:bg-white
                         text-slate-300 bg-slate-950/40 rounded-xl border border-slate-800 p-2" />
 
+          <!-- NEW: Fluvius reference -->
+          <p class="mt-2 text-xs text-slate-400">
+            Tip: download your CSV via Mijn Fluvius → <span class="font-semibold">Download “Kwartiertotalen”</span>.
+            <a href="https://mijn.fluvius.be/" target="_blank" rel="noopener noreferrer"
+               class="text-cyan-300 hover:text-cyan-200 underline underline-offset-4">
+              Open Mijn Fluvius
+            </a>
+          </p>
+
           <p id="status" class="mt-3 text-sm text-slate-300">
             No file loaded.
           </p>
@@ -87,6 +96,13 @@
             <div>
               <label class="block text-sm text-slate-300 mb-1">VAT number</label>
               <input id="companyVat" type="text" placeholder="e.g. BE0123.456.789"
+                     class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+
+            <!-- NEW: License plate -->
+            <div>
+              <label class="block text-sm text-slate-300 mb-1">License plate</label>
+              <input id="licensePlate" type="text" placeholder="e.g. 1-ABC-123"
                      class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
@@ -238,7 +254,7 @@
     const b = isoToDate(lastIso);
     if (!a || !b) return "—";
     const fmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
-    // Use a plain en dash so it renders cleanly in jsPDF (avoids weird glyphs like in your PDF) :contentReference[oaicite:1]{index=1}
+    // Use a plain en dash so it renders cleanly in jsPDF (avoids weird glyphs)
     return `${fmt.format(a)} – ${fmt.format(b)}`;
   }
 
@@ -264,8 +280,14 @@
   const companyName = document.getElementById("companyName");
   const companyAddress = document.getElementById("companyAddress");
   const companyVat = document.getElementById("companyVat");
+  const licensePlate = document.getElementById("licensePlate"); // NEW
   const costPerKwh = document.getElementById("costPerKwh");
   const minKwh = document.getElementById("minKwh");
+
+  // Optional polish: auto-uppercase license plate
+  licensePlate.addEventListener("input", () => {
+    licensePlate.value = licensePlate.value.toUpperCase();
+  });
 
   // ---------- Chart ----------
   function initChart() {
@@ -278,7 +300,6 @@
           label: "kWh per day",
           data: [],
           borderWidth: 0,
-          // Chart.js will auto-pick styling; Tailwind doesn't affect canvas directly
         }]
       },
       options: {
@@ -350,7 +371,6 @@
     updateChart();
     updateTable();
 
-    // Refresh status line with some extra clarity
     if (elFile.files?.[0]) {
       const dropped = Math.max(0, allDaily.length - parsedDaily.length);
       elStatus.textContent = `Loaded: ${elFile.files[0].name} • Days (≥ ${t} kWh): ${parsedDaily.length} • Filtered out: ${dropped}`;
@@ -423,10 +443,8 @@
         .map(([isoDate, kwh]) => ({ isoDate, dmyDate: isoToDmy(isoDate), kwh }))
         .sort((a, b) => a.isoDate.localeCompare(b.isoDate));
 
-      // Apply threshold (default 9)
       applyThresholdFilter();
 
-      // Extra details in status (keeps your original info too)
       const t = Number(minKwh.value || 0);
       const dropped = Math.max(0, allDaily.length - parsedDaily.length);
       elStatus.textContent =
@@ -446,8 +464,12 @@
     const cName = companyName.value.trim() || "—";
     const cAddr = companyAddress.value.trim() || "—";
     const cVat = companyVat.value.trim() || "—";
+    const plate = licensePlate.value.trim() || "—"; // NEW
     const cpk = Number(costPerKwh.value || 0);
     const t = Number(minKwh.value || 0);
+
+    const cregUrl = "https://www.creg.be/nl/consumenten/prijzen-en-tarieven/creg-tarief-voor-terugbetaling-thuisladen-bedrijfswagens";
+    const generatedOn = new Date();
 
     const totalKwh = parsedDaily.reduce((a, d) => a + d.kwh, 0);
     const totalCost = totalKwh * cpk;
@@ -466,8 +488,17 @@
     const lastIso  = parsedDaily[parsedDaily.length - 1]?.isoDate;
     const period = (firstIso && lastIso) ? formatPeriodLong(firstIso, lastIso) : "—";
 
+    // Left header block (slightly taller now)
     doc.text(`Period: ${period}`, 14, 23);
-    doc.text(`Cost per kWh: € ${cpk.toFixed(4)}`, 14, 28);
+    doc.text(`License plate: ${plate}`, 14, 28);
+    doc.text(`Cost per kWh: € ${cpk.toFixed(4)}`, 14, 33);
+
+    // CREG reference (small, grey)
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text(`Reference: CREG tariff`, 14, 38);
+    doc.setTextColor(0);
+    doc.setFontSize(10);
 
     // Company (right)
     const rightX = 110;
@@ -479,29 +510,29 @@
     const addrLines = doc.splitTextToSize(`Address:\n${cAddr}`, 85);
     doc.text(addrLines, rightX, 38);
 
-    // Summary
+    // Summary (moved down to avoid overlap with CREG text)
     doc.setFont("helvetica", "bold");
-    doc.text("Summary", 14, 43);
+    doc.text("Summary", 14, 58);
     doc.setFont("helvetica", "normal");
-    doc.text(`Total kWh: ${totalKwh.toFixed(2)}`, 14, 53);
-    doc.text(`Total cost: € ${totalCost.toFixed(2)}`, 14, 58);
+    doc.text(`Total kWh: ${totalKwh.toFixed(2)}`, 14, 68);
+    doc.text(`Total cost: € ${totalCost.toFixed(2)}`, 14, 73);
 
-    // Chart
+    // Chart (moved down)
     const canvas = document.getElementById("chart");
     const imgData = canvas.toDataURL("image/png", 1.0);
 
     doc.setFont("helvetica", "bold");
-    doc.text("Daily kWh", 14, 68);
-    doc.addImage(imgData, "PNG", 14, 72, 182, 55);
+    doc.text("Daily kWh", 14, 90);
+    doc.addImage(imgData, "PNG", 14, 94, 182, 55);
 
-    // Table
+    // Table (moved down)
     const body = parsedDaily.map(d => {
       const cost = d.kwh * cpk;
       return [ d.dmyDate, d.kwh.toFixed(3), cost.toFixed(2) ];
     });
 
     doc.autoTable({
-      startY: 132,
+      startY: 154,
       head: [["Date", "kWh", "Cost (€)"]],
       body,
       theme: "grid",
