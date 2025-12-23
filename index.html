@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Energy Report Generator</title>
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- PapaParse (CSV parsing) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #fff !important; }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="max-w-6xl mx-auto px-4 py-10">
+    <header class="flex flex-col gap-2 mb-8">
+      <div class="inline-flex items-center gap-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400 to-indigo-500"></div>
+        <div>
+          <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Energy Consumption Report</h1>
+          <p class="text-slate-300 text-sm">Upload CSV → daily kWh chart + table → export printable PDF</p>
+        </div>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Left: Inputs -->
+      <section class="lg:col-span-1 space-y-6">
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg">
+          <h2 class="text-lg font-semibold mb-4">1) Upload</h2>
+
+          <label class="block text-sm text-slate-300 mb-2">Quarter-hour CSV file</label>
+          <input id="csvFile" type="file" accept=".csv,text/csv"
+                 class="block w-full text-sm file:mr-4 file:py-2 file:px-4
+                        file:rounded-xl file:border-0 file:text-sm file:font-semibold
+                        file:bg-slate-100 file:text-slate-900 hover:file:bg-white
+                        text-slate-300 bg-slate-950/40 rounded-xl border border-slate-800 p-2" />
+
+          <p id="status" class="mt-3 text-sm text-slate-300">
+            No file loaded.
+          </p>
+
+          <div class="mt-4 flex gap-3 no-print">
+            <button id="btnParse"
+                    class="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-slate-950 font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled>
+              Parse & Preview
+            </button>
+            <button id="btnReset"
+                    class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold transition">
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg">
+          <h2 class="text-lg font-semibold mb-4">2) Company details</h2>
+
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm text-slate-300 mb-1">Company name</label>
+              <input id="companyName" type="text" placeholder="e.g. Example BV"
+                     class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-300 mb-1">Address</label>
+              <textarea id="companyAddress" rows="3" placeholder="Street + number&#10;ZIP City&#10;Country"
+                        class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+            </div>
+
+            <div>
+              <label class="block text-sm text-slate-300 mb-1">VAT number</label>
+              <input id="companyVat" type="text" placeholder="e.g. BE0123.456.789"
+                     class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg">
+          <h2 class="text-lg font-semibold mb-4">3) Pricing & filtering</h2>
+
+          <div class="flex items-baseline justify-between gap-3">
+            <label class="block text-sm text-slate-300 mb-1">Cost per kWh (€)</label>
+            <a
+              href="https://www.creg.be/nl/consumenten/prijzen-en-tarieven/creg-tarief-voor-terugbetaling-thuisladen-bedrijfswagens"
+              target="_blank" rel="noopener noreferrer"
+              class="text-xs text-cyan-300 hover:text-cyan-200 underline underline-offset-4"
+              title="Open CREG tariff page"
+            >
+              Check current rate (CREG)
+            </a>
+          </div>
+
+          <input id="costPerKwh" type="number" min="0" step="0.0001" value="0.30"
+                 class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+
+          <div class="mt-4">
+            <label class="block text-sm text-slate-300 mb-1">Include days with kWh ≥</label>
+            <input id="minKwh" type="number" min="0" step="0.1" value="9"
+                   class="w-full rounded-xl bg-slate-950/40 border border-slate-800 p-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <p class="mt-2 text-xs text-slate-400">
+              Only days meeting this threshold appear in the chart, table, and PDF.
+            </p>
+          </div>
+
+          <div class="mt-4 flex gap-3 no-print">
+            <button id="btnPdf"
+                    class="px-4 py-2 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled>
+              Export PDF
+            </button>
+            <button id="btnPrint"
+                    class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled>
+              Print Page
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Preview -->
+      <section class="lg:col-span-2 space-y-6">
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+            <h2 class="text-lg font-semibold">Daily consumption (kWh)</h2>
+            <div class="text-sm text-slate-300">
+              Rows included: <span class="font-semibold">Register starts with “Afname”</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-950/30 rounded-2xl border border-slate-800 p-3">
+            <canvas id="chart" height="110"></canvas>
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="rounded-2xl border border-slate-800 bg-slate-950/30 p-4">
+              <div class="text-xs text-slate-400">Days</div>
+              <div id="statDays" class="text-xl font-semibold">—</div>
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-950/30 p-4">
+              <div class="text-xs text-slate-400">Total kWh</div>
+              <div id="statKwh" class="text-xl font-semibold">—</div>
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-950/30 p-4">
+              <div class="text-xs text-slate-400">Total cost</div>
+              <div id="statCost" class="text-xl font-semibold">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg overflow-hidden">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">Table</h2>
+            <div class="text-sm text-slate-400" id="rangeLabel">—</div>
+          </div>
+
+          <div class="overflow-auto rounded-2xl border border-slate-800">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-950/60 text-slate-300">
+                <tr>
+                  <th class="text-left px-4 py-3 font-semibold">Date</th>
+                  <th class="text-right px-4 py-3 font-semibold">kWh</th>
+                  <th class="text-right px-4 py-3 font-semibold">Cost (€)</th>
+                </tr>
+              </thead>
+              <tbody id="tbody" class="divide-y divide-slate-800 bg-slate-950/20">
+                <tr>
+                  <td class="px-4 py-3 text-slate-400" colspan="3">No data yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="mt-3 text-xs text-slate-400">
+            Tip: if your CSV also contains “Injectie …” rows, those are ignored for this report.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <footer class="mt-10 text-xs text-slate-500">
+      Built client-side (no server). Data never leaves your browser.
+    </footer>
+  </div>
+
+<script>
+  // ---------- Utilities ----------
+  const euro = new Intl.NumberFormat(undefined, { style: "currency", currency: "EUR" });
+  const num3 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
+  const num2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+
+  function parseBelgianNumber(s) {
+    if (s == null) return 0;
+    return Number(String(s).replace(/\./g, "").replace(",", ".").trim()) || 0;
+  }
+
+  // "dd-mm-yyyy" -> "yyyy-mm-dd"
+  function dmyToIso(dmy) {
+    const m = String(dmy || "").trim().match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (!m) return null;
+    const [, dd, mm, yyyy] = m;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function isoToDmy(iso) {
+    const m = String(iso || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return iso;
+    const [, yyyy, mm, dd] = m;
+    return `${dd}-${mm}-${yyyy}`;
+  }
+
+  function isoToDate(iso) {
+    // Safe parse for yyyy-mm-dd into a Date in local time
+    const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const [_, y, mo, d] = m;
+    return new Date(Number(y), Number(mo) - 1, Number(d));
+  }
+
+  function formatPeriodLong(firstIso, lastIso) {
+    const a = isoToDate(firstIso);
+    const b = isoToDate(lastIso);
+    if (!a || !b) return "—";
+    const fmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+    // Use a plain en dash so it renders cleanly in jsPDF (avoids weird glyphs like in your PDF) :contentReference[oaicite:1]{index=1}
+    return `${fmt.format(a)} – ${fmt.format(b)}`;
+  }
+
+  // ---------- State ----------
+  let parsedDaily = []; // filtered daily records
+  let allDaily = [];    // unfiltered daily records (for re-filtering without re-parse)
+  let chart;
+
+  // ---------- DOM ----------
+  const elFile = document.getElementById("csvFile");
+  const elStatus = document.getElementById("status");
+  const btnParse = document.getElementById("btnParse");
+  const btnReset = document.getElementById("btnReset");
+  const btnPdf = document.getElementById("btnPdf");
+  const btnPrint = document.getElementById("btnPrint");
+  const tbody = document.getElementById("tbody");
+  const rangeLabel = document.getElementById("rangeLabel");
+
+  const statDays = document.getElementById("statDays");
+  const statKwh = document.getElementById("statKwh");
+  const statCost = document.getElementById("statCost");
+
+  const companyName = document.getElementById("companyName");
+  const companyAddress = document.getElementById("companyAddress");
+  const companyVat = document.getElementById("companyVat");
+  const costPerKwh = document.getElementById("costPerKwh");
+  const minKwh = document.getElementById("minKwh");
+
+  // ---------- Chart ----------
+  function initChart() {
+    const ctx = document.getElementById("chart");
+    chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: [],
+        datasets: [{
+          label: "kWh per day",
+          data: [],
+          borderWidth: 0,
+          // Chart.js will auto-pick styling; Tailwind doesn't affect canvas directly
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: "#cbd5e1" } },
+          tooltip: { mode: "index", intersect: false }
+        },
+        scales: {
+          x: {
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true },
+            grid: { color: "rgba(148,163,184,0.12)" }
+          },
+          y: {
+            ticks: { color: "#94a3b8" },
+            grid: { color: "rgba(148,163,184,0.12)" }
+          }
+        }
+      }
+    });
+  }
+
+  function updateChart() {
+    chart.data.labels = parsedDaily.map(d => d.dmyDate);
+    chart.data.datasets[0].data = parsedDaily.map(d => d.kwh);
+    chart.update();
+  }
+
+  // ---------- Table & Stats ----------
+  function updateTable() {
+    const cpk = Number(costPerKwh.value || 0);
+
+    if (!parsedDaily.length) {
+      tbody.innerHTML = `<tr><td class="px-4 py-3 text-slate-400" colspan="3">No data (try lowering the threshold).</td></tr>`;
+      rangeLabel.textContent = "—";
+      statDays.textContent = "—";
+      statKwh.textContent = "—";
+      statCost.textContent = "—";
+      return;
+    }
+
+    tbody.innerHTML = parsedDaily.map(d => {
+      const cost = d.kwh * cpk;
+      return `
+        <tr class="hover:bg-slate-900/40">
+          <td class="px-4 py-3 text-slate-200 whitespace-nowrap">${d.dmyDate}</td>
+          <td class="px-4 py-3 text-right text-slate-200 font-mono">${num3.format(d.kwh)}</td>
+          <td class="px-4 py-3 text-right text-slate-200 font-mono">${euro.format(cost)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    const firstIso = parsedDaily[0].isoDate;
+    const lastIso = parsedDaily[parsedDaily.length - 1].isoDate;
+    rangeLabel.textContent = formatPeriodLong(firstIso, lastIso);
+
+    const totalKwh = parsedDaily.reduce((a, d) => a + d.kwh, 0);
+    const totalCost = totalKwh * cpk;
+
+    statDays.textContent = String(parsedDaily.length);
+    statKwh.textContent = num2.format(totalKwh);
+    statCost.textContent = euro.format(totalCost);
+  }
+
+  function applyThresholdFilter() {
+    const t = Number(minKwh.value || 0);
+    parsedDaily = allDaily.filter(d => d.kwh >= t);
+    updateChart();
+    updateTable();
+
+    // Refresh status line with some extra clarity
+    if (elFile.files?.[0]) {
+      const dropped = Math.max(0, allDaily.length - parsedDaily.length);
+      elStatus.textContent = `Loaded: ${elFile.files[0].name} • Days (≥ ${t} kWh): ${parsedDaily.length} • Filtered out: ${dropped}`;
+    }
+
+    btnPdf.disabled = parsedDaily.length === 0;
+    btnPrint.disabled = parsedDaily.length === 0;
+  }
+
+  // ---------- CSV parsing ----------
+  function parseCsvFile(file) {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => resolve(results.data),
+        error: (err) => reject(err)
+      });
+    });
+  }
+
+  function normalizeHeaderAccess(row, possibleKeys) {
+    for (const k of possibleKeys) {
+      if (row[k] != null && row[k] !== "") return row[k];
+    }
+    const keys = Object.keys(row || {});
+    for (const pk of possibleKeys) {
+      const trimmed = pk.trim();
+      const found = keys.find(x => String(x).trim() === trimmed);
+      if (found) return row[found];
+    }
+    return null;
+  }
+
+  async function handleParse() {
+    const file = elFile.files?.[0];
+    if (!file) return;
+
+    elStatus.textContent = "Parsing…";
+    btnParse.disabled = true;
+    btnPdf.disabled = true;
+    btnPrint.disabled = true;
+
+    try {
+      const rows = await parseCsvFile(file);
+
+      const map = new Map(); // isoDate -> sumKwh
+      let included = 0;
+      let skipped = 0;
+
+      for (const r of rows) {
+        const dateDmy = normalizeHeaderAccess(r, ["Van (datum)", "﻿Van (datum)"]);
+        const register = normalizeHeaderAccess(r, ["Register"]);
+        const volume = normalizeHeaderAccess(r, ["Volume"]);
+
+        if (!dateDmy || !register) { skipped++; continue; }
+        if (!String(register).trim().toLowerCase().startsWith("afname")) { skipped++; continue; }
+
+        const iso = dmyToIso(dateDmy);
+        if (!iso) { skipped++; continue; }
+
+        const kwh = parseBelgianNumber(volume);
+        if (!Number.isFinite(kwh)) { skipped++; continue; }
+
+        map.set(iso, (map.get(iso) || 0) + kwh);
+        included++;
+      }
+
+      allDaily = Array.from(map.entries())
+        .map(([isoDate, kwh]) => ({ isoDate, dmyDate: isoToDmy(isoDate), kwh }))
+        .sort((a, b) => a.isoDate.localeCompare(b.isoDate));
+
+      // Apply threshold (default 9)
+      applyThresholdFilter();
+
+      // Extra details in status (keeps your original info too)
+      const t = Number(minKwh.value || 0);
+      const dropped = Math.max(0, allDaily.length - parsedDaily.length);
+      elStatus.textContent =
+        `Loaded: ${file.name} • Daily records: ${allDaily.length} • Days (≥ ${t} kWh): ${parsedDaily.length} • Filtered out: ${dropped} • Rows used: ${included} • Rows ignored: ${skipped}`;
+    } catch (e) {
+      console.error(e);
+      elStatus.textContent = "Parsing failed. Check console for details.";
+    } finally {
+      btnParse.disabled = false;
+    }
+  }
+
+  // ---------- PDF export ----------
+  function exportPdf() {
+    const { jsPDF } = window.jspdf;
+
+    const cName = companyName.value.trim() || "—";
+    const cAddr = companyAddress.value.trim() || "—";
+    const cVat = companyVat.value.trim() || "—";
+    const cpk = Number(costPerKwh.value || 0);
+    const t = Number(minKwh.value || 0);
+
+    const totalKwh = parsedDaily.reduce((a, d) => a + d.kwh, 0);
+    const totalCost = totalKwh * cpk;
+
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("EV Charge Report", 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    const firstIso = parsedDaily[0]?.isoDate;
+    const lastIso  = parsedDaily[parsedDaily.length - 1]?.isoDate;
+    const period = (firstIso && lastIso) ? formatPeriodLong(firstIso, lastIso) : "—";
+
+    doc.text(`Period: ${period}`, 14, 23);
+    doc.text(`Cost per kWh: € ${cpk.toFixed(4)}`, 14, 28);
+
+    // Company (right)
+    const rightX = 110;
+    doc.setFont("helvetica", "bold");
+    doc.text("Company", rightX, 23);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Name: ${cName}`, rightX, 28);
+    doc.text(`VAT: ${cVat}`, rightX, 33);
+    const addrLines = doc.splitTextToSize(`Address:\n${cAddr}`, 85);
+    doc.text(addrLines, rightX, 38);
+
+    // Summary
+    doc.setFont("helvetica", "bold");
+    doc.text("Summary", 14, 43);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Total kWh: ${totalKwh.toFixed(2)}`, 14, 53);
+    doc.text(`Total cost: € ${totalCost.toFixed(2)}`, 14, 58);
+
+    // Chart
+    const canvas = document.getElementById("chart");
+    const imgData = canvas.toDataURL("image/png", 1.0);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Daily kWh", 14, 68);
+    doc.addImage(imgData, "PNG", 14, 72, 182, 55);
+
+    // Table
+    const body = parsedDaily.map(d => {
+      const cost = d.kwh * cpk;
+      return [ d.dmyDate, d.kwh.toFixed(3), cost.toFixed(2) ];
+    });
+
+    doc.autoTable({
+      startY: 132,
+      head: [["Date", "kWh", "Cost (€)"]],
+      body,
+      theme: "grid",
+      styles: { font: "helvetica", fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: [15, 23, 42] },
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } },
+      margin: { left: 14, right: 14 }
+    });
+
+    // Footer
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(9);
+      doc.setTextColor(120);
+      doc.text(`Generated ${new Date().toLocaleString()}`, 14, 292);
+      doc.text(`Page ${i} / ${pageCount}`, 196, 292, { align: "right" });
+    }
+
+    const filename = `energy-report_${new Date().toISOString().slice(0,10)}.pdf`;
+    doc.save(filename);
+  }
+
+  // ---------- Events ----------
+  elFile.addEventListener("change", () => {
+    btnParse.disabled = !elFile.files?.length;
+    elStatus.textContent = elFile.files?.[0] ? `Selected: ${elFile.files[0].name}` : "No file loaded.";
+  });
+
+  btnParse.addEventListener("click", handleParse);
+
+  btnReset.addEventListener("click", () => {
+    elFile.value = "";
+    parsedDaily = [];
+    allDaily = [];
+    chart.data.labels = [];
+    chart.data.datasets[0].data = [];
+    chart.update();
+    updateTable();
+    elStatus.textContent = "No file loaded.";
+    btnParse.disabled = true;
+    btnPdf.disabled = true;
+    btnPrint.disabled = true;
+  });
+
+  costPerKwh.addEventListener("input", () => {
+    if (parsedDaily.length) updateTable();
+  });
+
+  minKwh.addEventListener("input", () => {
+    if (allDaily.length) applyThresholdFilter();
+  });
+
+  btnPdf.addEventListener("click", exportPdf);
+  btnPrint.addEventListener("click", () => window.print());
+
+  // Init
+  initChart();
+  updateTable();
+</script>
+</body>
+</html>
